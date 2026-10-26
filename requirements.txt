@@ -1,0 +1,10 @@
+# PunorAI — AI-Powered Textile Circularity Platform
+# Requires Python 3.10+
+#
+# PunorAI is built entirely on the Python Standard Library:
+#   - http.server (Multi-threaded HTTP web server)
+#   - sqlite3 (Database persistence & audit trails)
+#   - json, math, html, urllib (Data processing & templates)
+#   - unittest (Automated regression test suite)
+#
+# No external pip dependencies are required.
