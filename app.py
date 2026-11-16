@@ -1,4 +1,9 @@
-import json, os, base64, html, urllib.parse, threading, traceback
+import json, os, base64, html, urllib.parse, threading, traceback, inspect
+import auth
+import admin
+import seller
+import buyer
+from brand import render_brand_logo, BrandLogo
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from core import (get_db, init_db, seed, plan_aggregation, match_buyers, plan_route,
                   svg_bar, svg_ring_gauge, add_event, STATUS_LABEL, CATEGORIES, NOW, batch_verification_status)
@@ -36,6 +41,22 @@ conn = ThreadLocalConnectionProxy()
 init_db(conn)
 if seed(conn): print("Demo data seeded.")
 
+def get_current_user(handler):
+    if not handler or not hasattr(handler, "headers"):
+        return None, None
+    sid = auth.extract_session_id(handler.headers)
+    if not sid:
+        return None, None
+    return auth.get_session_and_user(conn, sid)
+
+def require_role(handler, allowed_roles=None):
+    user, csrf = get_current_user(handler)
+    if not user:
+        return None, None
+    if allowed_roles and user["role"] not in allowed_roles:
+        return False, csrf
+    return user, csrf
+
 def e(x): return html.escape(str(x))
 def badge(s): return "<span class='badge b-" + s + "'>" + STATUS_LABEL.get(s, s) + "</span>"
 
@@ -71,11 +92,12 @@ ICONS = {
     "/planning": """<svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="19" r="3"/><path d="M9 19h8.5a3.5 3.5 0 0 0 0-7h-11a3.5 3.5 0 0 1 0-7H15"/><circle cx="18" cy="5" r="3"/></svg>""",
     "/passports": """<svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>""",
     "/reports": """<svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>""",
-    "/": """<svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>""",
+    "/overview": """<svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>""",
+    "/": """<svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>""",
 }
 
 NAV_CORE = [
-    ("/dashboard", "Dashboard"),
+    ("/overview", "Platform Overview"),
     ("/lots", "Waste Inventory"),
     ("/buyers", "AI Matching"),
     ("/aggregation", "Aggregation Planner"),
@@ -84,10 +106,10 @@ NAV_CORE = [
     ("/reports", "Impact Analytics"),
 ]
 NAV_SYSTEM = [
-    ("/", "Platform Overview"),
+    ("/", "Home"),
 ]
 
-def layout(title, active, body, breadcrumb_label=""):
+def layout(title, active, body, breadcrumb_label="", user=None):
     cur_bc = breadcrumb_label or title
     core_nav = "".join(f"<a href='{u}' class='nav-link {'on' if u == active else ''}'>{ICONS.get(u, '')}<span>{t}</span></a>" for u, t in NAV_CORE)
     sys_nav = "".join(f"<a href='{u}' class='nav-link {'on' if u == active else ''}'>{ICONS.get(u, '')}<span>{t}</span></a>" for u, t in NAV_SYSTEM)
@@ -107,26 +129,7 @@ def layout(title, active, body, breadcrumb_label=""):
 
   <aside class="app-sidebar">
     <div class="sidebar-header">
-      <a class="brand-link" href="/dashboard">
-        <div class="brand-logo-icon">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" class="punor-logo-svg" aria-label="PunorAI Logo">
-            <defs>
-              <linearGradient id="punorLogoGrad" x1="2" y1="2" x2="22" y2="22" gradientUnits="userSpaceOnUse">
-                <stop offset="0%" stop-color="#10B981"/>
-                <stop offset="60%" stop-color="#34D399"/>
-                <stop offset="100%" stop-color="#B8D96B"/>
-              </linearGradient>
-            </defs>
-            <circle cx="12" cy="12" r="9" stroke="url(#punorLogoGrad)" stroke-width="2.2" stroke-linecap="round"/>
-            <path d="M6.5 15.5C8 11.5 16 12.5 17.5 8.5" stroke="#10B981" stroke-width="2" stroke-linecap="round"/>
-            <path d="M6.5 8.5C8 12.5 16 11.5 17.5 15.5" stroke="#FFFFFF" stroke-width="1.8" stroke-linecap="round" opacity="0.9"/>
-            <circle cx="12" cy="12" r="2.2" fill="#B8D96B"/>
-          </svg>
-        </div>
-        <div class="brand-text-block">
-          <div class="brand-name">Punor<span>AI</span></div>
-        </div>
-      </a>
+      {render_brand_logo(href="/", extra_class="brand-link", id_prefix="punor", size=24)}
     </div>
 
     <nav class="sidebar-nav">
@@ -138,6 +141,18 @@ def layout(title, active, body, breadcrumb_label=""):
     </nav>
 
     <div class="sidebar-footer">
+      {f'''
+      <div class="operator-card">
+        <div class="operator-profile">
+          <div class="operator-avatar" style="background: rgba(16,185,129,0.25); color: #34D399; font-weight: 700;">{e((user['org_name'][:2] if user.get('org_name') else user['role'][:2]).upper())}</div>
+          <div class="operator-info">
+            <div class="operator-name" title="{e(user['org_name'])}">{e(user['org_name'][:18])}</div>
+            <div class="operator-hub"><span class="status-dot-pulse"></span> {e(user.get('location_name') or user['role'].title())}</div>
+          </div>
+        </div>
+        <a href="/logout" title="Sign Out" class="btn btn-sm btn-outline" style="padding: 4px 8px; font-size: 11px; color:#EF4444; border-color:rgba(239,68,68,0.3); text-decoration:none;">Exit</a>
+      </div>
+      ''' if user else '''
       <div class="operator-card">
         <div class="operator-profile">
           <div class="operator-avatar">OP</div>
@@ -148,6 +163,7 @@ def layout(title, active, body, breadcrumb_label=""):
         </div>
         <button onclick="resetDemo()" title="Reset Demo Data" class="btn btn-sm btn-outline" style="padding: 4px 8px; font-size: 11px; color:#A9C2B6; background:transparent; border-color:rgba(255,255,255,0.15);">Reset</button>
       </div>
+      '''}
     </div>
   </aside>
 
@@ -168,6 +184,16 @@ def layout(title, active, body, breadcrumb_label=""):
       </div>
 
       <div class="topbar-right">
+        {f'''
+        <div style="display: flex; align-items: center; gap: 8px; margin-right: 8px;">
+          <span class="badge b-verified" style="font-size: 11.5px; padding: 4px 10px;">{e(user['org_name'][:18])} &bull; {user['role'].title()}</span>
+          <a href="/logout" class="btn btn-sm btn-outline" style="padding: 4px 10px; font-size: 12px; color: #EF4444; border-color: rgba(239,68,68,0.35); text-decoration: none;">Logout</a>
+        </div>
+        ''' if user else '''
+        <div style="display: flex; align-items: center; gap: 8px; margin-right: 8px;">
+          <a href="/login" class="btn btn-sm btn-outline" style="padding: 4px 12px; font-size: 12px; color: #10B981; border-color: rgba(16,185,129,0.35); text-decoration: none;">Sign In</a>
+        </div>
+        '''}
         <div class="topbar-utility-icons">
           <button class="topbar-icon-btn" title="Operator Profile" aria-label="Operator Profile">
             <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
@@ -443,7 +469,224 @@ def lot_row(l):
             "<td>" + e(l["location_name"]) + "</td><td>" + xai_badge(dict(l)) + (" <span class='badge b-alloc'>Allocated</span>" if l["allocated"] else "") + "</td></tr>")
 
 # ---------- pages ----------
-def page_landing():
+def page_home():
+    nav_logo = render_brand_logo(href="/", extra_class="landing-brand-link", id_prefix="nav", size=26, aria_label="PunorAI Home")
+    footer_logo = render_brand_logo(href="/", extra_class="landing-brand-link footer-brand-link", id_prefix="footer", size=22, aria_label="PunorAI Home")
+
+    return """<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>PunorAI — AI-Powered Textile Circularity Platform</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="landing-body">
+  <!-- 1. Landing Navigation Header -->
+  <header class="landing-nav-header">
+    <div class="landing-nav-container">
+      """ + nav_logo + """
+
+      <!-- Center Navigation Links -->
+      <nav class="landing-nav-links" id="landingNavMenu">
+        <a href="/" class="landing-nav-item active">
+          <span>Home</span>
+          <span class="active-indicator"></span>
+        </a>
+        <a href="/overview" class="landing-nav-item">Platform Overview</a>
+        <a href="/overview#pipeline" class="landing-nav-item">How It Works</a>
+        <a href="/reports" class="landing-nav-item">Impact &amp; Stats</a>
+      </nav>
+
+      <!-- Right Utility Actions -->
+      <div class="landing-nav-right">
+        <a href="/login" class="landing-demo-login-btn">
+          <span>Demo Login</span>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
+          </svg>
+        </a>
+        <button class="landing-mobile-toggle" onclick="toggleLandingMenu()" aria-label="Toggle navigation">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- 2. Hero Section -->
+  <main>
+    <section class="landing-hero-section">
+      <div class="landing-hero-grid">
+        <!-- Left Hero Copy -->
+        <div class="landing-hero-left">
+          <div class="hero-scope-badge">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+              <path d="M12 2C8 6 3 10 3 15a9 9 0 0 0 18 0c0-5-5-9-9-13z" fill="#10B981" stroke="#10B981"/>
+            </svg>
+            <span>AI-Powered Textile Circularity</span>
+          </div>
+
+          <h1 class="landing-headline">
+            Turning Textile Waste<br>
+            Into <span class="highlight-valuable">Valuable</span> Resources.
+          </h1>
+
+          <p class="landing-hero-desc">
+            Connecting textile waste, responsible buyers and circular resource management through intelligent digital solutions.
+          </p>
+
+          <div class="landing-hero-actions">
+            <a href="/overview" class="btn-hero-primary">
+              <span>Explore Platform</span>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                <line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>
+              </svg>
+            </a>
+            <a href="/overview" class="btn-hero-secondary">
+              <span>About PunorAI</span>
+            </a>
+          </div>
+        </div>
+
+        <!-- Right Hero Visual: Animated Circular Economy Ecosystem Card -->
+        <div class="landing-hero-right">
+          <div class="hero-visual-stage">
+            <div class="hero-ambient-glow" aria-hidden="true"></div>
+            
+            <div class="hero-textile-frame" role="region" aria-label="PunorAI Textile Warehouse &amp; Recycled Materials">
+              <img src="/static/hero_textile_roll.jpg" 
+                   alt="Industrial textile warehouse with sustainably recycled fabric rolls" 
+                   class="hero-textile-img" 
+                   loading="eager" />
+              <div class="hero-image-overlay" aria-hidden="true"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 3. Choose Your Experience Section -->
+    <section class="experience-section">
+      <div class="section-divider">
+        <span class="divider-line"></span>
+        <h2 class="section-heading">Choose Your Experience</h2>
+        <span class="divider-line"></span>
+      </div>
+
+      <div class="role-cards-grid">
+        <!-- 1. Seller Card -->
+        <a href="/seller" class="experience-card role-card">
+          <div class="card-icon-box">
+            <svg class="role-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M2 20h20M5 20V10l5 4V10l5 4V4h5v16" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+          <div class="card-content">
+            <h3 class="card-title">Seller</h3>
+            <p class="card-desc">Manage waste lots</p>
+          </div>
+          <div class="card-action-btn" aria-label="Go to Seller Experience">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>
+            </svg>
+          </div>
+        </a>
+
+        <!-- 2. Admin Card -->
+        <a href="/admin" class="experience-card role-card">
+          <div class="card-icon-box">
+            <svg class="role-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+              <polyline points="9 12 11 14 15 10"/>
+            </svg>
+          </div>
+          <div class="card-content">
+            <h3 class="card-title">Admin</h3>
+            <p class="card-desc">Oversee &amp; manage</p>
+          </div>
+          <div class="card-action-btn" aria-label="Go to Admin Experience">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>
+            </svg>
+          </div>
+        </a>
+
+        <!-- 3. Buyer Card -->
+        <a href="/buyer" class="experience-card role-card">
+          <div class="card-icon-box">
+            <svg class="role-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/>
+              <line x1="3" y1="6" x2="21" y2="6"/>
+              <path d="M16 10a4 4 0 0 1-8 0"/>
+            </svg>
+          </div>
+          <div class="card-content">
+            <h3 class="card-title">Buyer</h3>
+            <p class="card-desc">Explore materials</p>
+          </div>
+          <div class="card-action-btn" aria-label="Go to Buyer Experience">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>
+            </svg>
+          </div>
+        </a>
+      </div>
+
+
+    </section>
+  </main>
+
+  <!-- 5. Minimal Clean Landing Footer -->
+  <footer class="landing-footer">
+    <div class="landing-footer-container">
+      <div class="footer-left">
+        """ + footer_logo + """
+        <span class="footer-pipe">|</span>
+        <span class="footer-subtitle">AI-Powered Textile Circularity Platform</span>
+      </div>
+
+      <!-- Center SDG Image Cards -->
+      <div class="footer-center">
+        <span class="footer-sdg-divider"></span>
+        <div class="footer-sdg-strip">
+          <div class="footer-sdg-card sdg-12" data-sdg="12" title="SDG 12: Responsible Consumption and Production">
+            <img src="/static/sdg/sdg12.png" alt="SDG 12: Responsible Consumption and Production" class="footer-sdg-img" loading="lazy">
+          </div>
+          <div class="footer-sdg-card sdg-9" data-sdg="9" title="SDG 9: Industry, Innovation and Infrastructure">
+            <img src="/static/sdg/sdg9.png" alt="SDG 9: Industry, Innovation and Infrastructure" class="footer-sdg-img" loading="lazy">
+          </div>
+          <div class="footer-sdg-card sdg-13" data-sdg="13" title="SDG 13: Climate Action">
+            <img src="/static/sdg/sdg13.png" alt="SDG 13: Climate Action" class="footer-sdg-img" loading="lazy">
+          </div>
+          <div class="footer-sdg-card sdg-8" data-sdg="8" title="SDG 8: Decent Work and Economic Growth">
+            <img src="/static/sdg/sdg8.png" alt="SDG 8: Decent Work and Economic Growth" class="footer-sdg-img" loading="lazy">
+          </div>
+          <div class="footer-sdg-card sdg-17" data-sdg="17" title="SDG 17: Partnerships for the Goals">
+            <img src="/static/sdg/sdg17.png" alt="SDG 17: Partnerships for the Goals" class="footer-sdg-img" loading="lazy">
+          </div>
+        </div>
+        <span class="footer-sdg-divider"></span>
+      </div>
+
+      <div class="footer-right">
+        <a href="https://github.com/ibrahimsultan938-beep/punorai-textile-circularity" target="_blank" rel="noopener noreferrer" class="footer-link">GitHub</a>
+        <span class="footer-dot">&bull;</span>
+        <a href="mailto:contact@punorai.org" class="footer-link">Contact</a>
+        <span class="footer-dot">&bull;</span>
+        <a href="/overview" class="footer-link">Project Info</a>
+      </div>
+    </div>
+  </footer>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
+"""
+
+
+def page_overview():
     body = (f"""<div class="page-header">
       <div>
         <div style="margin-bottom: 8px;">
@@ -457,7 +700,7 @@ def page_landing():
         <p class="page-subtitle">Submitted for the <strong>Circular Future</strong> challenge under <strong>ClimateSphere AI</strong> &mdash; AI for decarbonization, resilience, water, energy, and the circular economy.</p>
       </div>
       <div class="page-actions">
-        <a class="btn btn-primary" href="/dashboard">Open Operational Dashboard &rarr;</a>
+        <a class="btn btn-primary" href="#workspaces">Role Workspaces &rarr;</a>
         <a class="btn btn-outline" href="/lots">Inspect Inventory</a>
       </div>
     </div>
@@ -486,64 +729,185 @@ def page_landing():
           <strong>PunorAI</strong> provides the AI-powered combinatorial optimization and digital traceability infrastructure that aggregates fragmented factory scrap into industrial-scale, buyer-compatible, verified secondary feedstock.
         </p>
         <div style="display: flex; gap: 12px; flex-wrap: wrap;">
-          <a class="btn btn-accent" href="/dashboard">Enter Operational Dashboard &rarr;</a>
+          <a class="btn btn-accent" href="#workspaces">Explore Role Workspaces &rarr;</a>
           <a class="btn btn-outline" style="color: #fff; background: rgba(255,255,255,0.1); border-color: rgba(255,255,255,0.25);" href="/aggregation">Run Aggregation Optimizer</a>
           <a class="btn btn-outline" style="color: #fff; background: rgba(255,255,255,0.1); border-color: rgba(255,255,255,0.25);" href="/lots">Explore Waste Inventory</a>
         </div>
       </div>
     </div>
 
+    <!-- Role-Based Workspaces & Portals -->
+    <div id="workspaces" class="overview-section-header" style="margin-top: 32px;">
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <span class="badge b-verified" style="font-size: 11px;">Workspaces</span>
+        <h3 style="margin: 0;">Role-Based Workspaces &amp; Dedicated Portals</h3>
+      </div>
+      <div class="muted" style="font-size: 13px;">Dedicated, authenticated operational interfaces designed for each stakeholder in the textile circularity ecosystem</div>
+    </div>
+
+    <div class="role-workspaces-grid">
+      <!-- 1. Seller Workspace Card -->
+      <div class="card workspace-nav-card">
+        <div>
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px;">
+            <div class="workspace-icon-box">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M2 20h20M5 20V10l5 4V10l5 4V4h5v16"/>
+              </svg>
+            </div>
+            <span class="badge b-verified" style="font-size: 11px;">Waste Producers</span>
+          </div>
+          <h4 style="margin: 0 0 8px; font-size: 17px; color: #FFFFFF;">Seller Workspace</h4>
+          <p class="muted" style="font-size: 13px; line-height: 1.6; margin-bottom: 16px;">
+            For garment factories and cutting floors across Dhaka, Gazipur, and Chittagong. Register post-industrial scrap lots, track physical QA verification, fulfill buyer purchase requests, and monitor sales revenue.
+          </p>
+          <div style="display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 20px;">
+            <span class="node-stat-pill">Lot Intake</span>
+            <span class="node-stat-pill">QA Verification</span>
+            <span class="node-stat-pill">Purchase Requests</span>
+          </div>
+        </div>
+        <a href="/seller" class="btn btn-primary" style="text-align: center; justify-content: center; width: 100%; box-sizing: border-box; text-decoration: none;">
+          <span>Enter Seller Workspace</span>
+          <span style="margin-left: 6px;">&rarr;</span>
+        </a>
+      </div>
+
+      <!-- 2. Buyer Workspace Card -->
+      <div class="card workspace-nav-card">
+        <div>
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px;">
+            <div class="workspace-icon-box">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/>
+                <line x1="3" y1="6" x2="21" y2="6"/>
+                <path d="M16 10a4 4 0 0 1-8 0"/>
+              </svg>
+            </div>
+            <span class="badge b-verified" style="font-size: 11px;">Recyclers &amp; Spinners</span>
+          </div>
+          <h4 style="margin: 0 0 8px; font-size: 17px; color: #FFFFFF;">Buyer Workspace</h4>
+          <p class="muted" style="font-size: 13px; line-height: 1.6; margin-bottom: 16px;">
+            For textile recyclers, circular spinning mills, and sustainability buyers. Browse verified waste inventory, submit purchase requests with custom technical criteria, track orders, and access digital passports.
+          </p>
+          <div style="display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 20px;">
+            <span class="node-stat-pill">Browse Materials</span>
+            <span class="node-stat-pill">Order Tracking</span>
+            <span class="node-stat-pill">Digital Passports</span>
+          </div>
+        </div>
+        <a href="/buyer" class="btn btn-primary" style="text-align: center; justify-content: center; width: 100%; box-sizing: border-box; text-decoration: none;">
+          <span>Enter Buyer Workspace</span>
+          <span style="margin-left: 6px;">&rarr;</span>
+        </a>
+      </div>
+
+      <!-- 3. Admin Control Center Card -->
+      <div class="card workspace-nav-card">
+        <div>
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px;">
+            <div class="workspace-icon-box">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                <polyline points="9 12 11 14 15 10"/>
+              </svg>
+            </div>
+            <span class="badge b-verified" style="font-size: 11px;">Operations &amp; QA</span>
+          </div>
+          <h4 style="margin: 0 0 8px; font-size: 17px; color: #FFFFFF;">Admin Control Center</h4>
+          <p class="muted" style="font-size: 13px; line-height: 1.6; margin-bottom: 16px;">
+            For platform operations and quality assurance managers. Verify submitted supplier lots, review and approve purchase requests, manage user access and role privileges, and oversee reverse logistics.
+          </p>
+          <div style="display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 20px;">
+            <span class="node-stat-pill">Lot Verification</span>
+            <span class="node-stat-pill">Request Approval</span>
+            <span class="node-stat-pill">User Governance</span>
+          </div>
+        </div>
+        <a href="/admin" class="btn btn-primary" style="text-align: center; justify-content: center; width: 100%; box-sizing: border-box; text-decoration: none;">
+          <span>Enter Admin Workspace</span>
+          <span style="margin-left: 6px;">&rarr;</span>
+        </a>
+      </div>
+    </div>
+
     <!-- 7-Stage End-to-End Circularity Workflow -->
-    <div style="margin-bottom: 24px;">
+    <div id="pipeline" style="margin-bottom: 28px;">
       {pipeline_strip()}
     </div>
 
-    <!-- 6 Core Architectural Pillars of Circular Future -->
+    <!-- 7 Core Platform Capabilities -->
     <div class="overview-section-header">
-      <h3>Six Core Architectural Pillars</h3>
-      <div class="muted" style="font-size: 13px;">How PunorAI operationalizes resource recovery across the Bangladesh garment manufacturing ecosystem</div>
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <span class="badge b-verified" style="font-size: 11px;">Core Engine</span>
+        <h3 style="margin: 0;">Seven Core Platform Capabilities</h3>
+      </div>
+      <div class="muted" style="font-size: 13px;">End-to-end intelligent digital solutions driving circular textile resource recovery across Bangladesh</div>
     </div>
 
     <div class="grid3" style="margin-bottom: 28px;">
+      <!-- Capability 1: Waste Inventory -->
       <div class="card">
-        <div style="font-size: 22px; font-weight: 800; color: var(--primary-forest); margin-bottom: 6px;">01</div>
-        <h3 style="margin-top:0; font-size: 16px;">Material Characterization &amp; Intake</h3>
-        <p class="muted" style="line-height: 1.55; font-size: 13px;">Standardized physical profiling of cutting clips (fiber category, color, grade, contamination % and mill origin). Rule-based classification helper with mandatory physical QA confirmation.</p>
+        <div style="font-size: 20px; font-weight: 800; color: var(--primary-forest); margin-bottom: 6px;">01</div>
+        <h3 style="margin-top:0; font-size: 16px;">Textile Waste Inventory</h3>
+        <p class="muted" style="line-height: 1.55; font-size: 13px;">Standardized digital catalog of post-industrial cutting clips across apparel mills, tracking fiber category, color family, mill origin, declared weight, and availability.</p>
         <a href="/lots" class="insight-action" style="font-size: 12px;">Explore Waste Inventory &rarr;</a>
       </div>
+
+      <!-- Capability 2: AI Verification & Grading -->
       <div class="card">
-        <div style="font-size: 22px; font-weight: 800; color: var(--primary-forest); margin-bottom: 6px;">02</div>
-        <h3 style="margin-top:0; font-size: 16px;">Combinatorial Multi-Lot Aggregation</h3>
-        <p class="muted" style="line-height: 1.55; font-size: 13px;">Explainable multi-objective Pareto solver that bundles fragmented 200&ndash;500 kg lots into uniform 1,000+ kg industrial recycler batches with multi-objective trade-offs across logistics friction (BDT/kg), QA verification, and material purity.</p>
+        <div style="font-size: 20px; font-weight: 800; color: var(--primary-forest); margin-bottom: 6px;">02</div>
+        <h3 style="margin-top:0; font-size: 16px;">AI Verification &amp; Material Grading</h3>
+        <p class="muted" style="line-height: 1.55; font-size: 13px;">Multi-criteria physical quality assurance protocol verifying supplier claims against intake inspections, calculating confidence scores, and assigning standardized A/B/C purity grades.</p>
+        <a href="/lots" class="insight-action" style="font-size: 12px;">Inspect Verified Lots &rarr;</a>
+      </div>
+
+      <!-- Capability 3: AI Matching -->
+      <div class="card">
+        <div style="font-size: 20px; font-weight: 800; color: var(--primary-forest); margin-bottom: 6px;">03</div>
+        <h3 style="margin-top:0; font-size: 16px;">AI Matching &amp; Recycler Criteria</h3>
+        <p class="muted" style="line-height: 1.55; font-size: 13px;">Automated compatibility matching between fragmented factory lots and technical recycler thresholds (fiber purity, minimum lot size, maximum elastane tolerance, and pricing).</p>
+        <a href="/buyers" class="insight-action" style="font-size: 12px;">Inspect Matching Criteria &rarr;</a>
+      </div>
+
+      <!-- Capability 4: Waste Aggregation -->
+      <div class="card">
+        <div style="font-size: 20px; font-weight: 800; color: var(--primary-forest); margin-bottom: 6px;">04</div>
+        <h3 style="margin-top:0; font-size: 16px;">Combinatorial Waste Aggregation</h3>
+        <p class="muted" style="line-height: 1.55; font-size: 13px;">Explainable multi-objective Pareto solver bundling fragmented 200&ndash;500 kg lots into uniform 1,000+ kg industrial recycler batches with transparent trade-offs across logistics friction and QA confidence.</p>
         <a href="/aggregation" class="insight-action" style="font-size: 12px;">Run Aggregation Optimizer &rarr;</a>
       </div>
+
+      <!-- Capability 5: Collection Logistics -->
       <div class="card">
-        <div style="font-size: 22px; font-weight: 800; color: var(--primary-forest); margin-bottom: 6px;">03</div>
-        <h3 style="margin-top:0; font-size: 16px;">Recycler Matching &amp; Technical Criteria</h3>
-        <p class="muted" style="line-height: 1.55; font-size: 13px;">Algorithmic compatibility scoring evaluating buyer-specific technical thresholds (fiber purity, minimum weight, maximum contamination tolerance, and regional price discovery).</p>
-        <a href="/buyers" class="insight-action" style="font-size: 12px;">Inspect Buyer Criteria &rarr;</a>
-      </div>
-      <div class="card">
-        <div style="font-size: 22px; font-weight: 800; color: var(--primary-forest); margin-bottom: 6px;">04</div>
-        <h3 style="margin-top:0; font-size: 16px;">Resource Recovery Reverse Logistics</h3>
-        <p class="muted" style="line-height: 1.55; font-size: 13px;">Clustered multi-stop pickup routing across Dhaka-Gazipur-Ashulia garment mills using Haversine network analysis and transparent freight cost modeling (120 BDT/km).</p>
+        <div style="font-size: 20px; font-weight: 800; color: var(--primary-forest); margin-bottom: 6px;">05</div>
+        <h3 style="margin-top:0; font-size: 16px;">Collection Logistics &amp; Routing</h3>
+        <p class="muted" style="line-height: 1.55; font-size: 13px;">Clustered multi-stop reverse logistics routing across Dhaka, Gazipur, Ashulia, and Narayanganj textile clusters using Haversine network analysis and transparent transport cost modeling (120 BDT/km).</p>
         <a href="/planning" class="insight-action" style="font-size: 12px;">View Logistics Routing &rarr;</a>
       </div>
+
+      <!-- Capability 6: Material Passports -->
       <div class="card">
-        <div style="font-size: 22px; font-weight: 800; color: var(--primary-forest); margin-bottom: 6px;">05</div>
-        <h3 style="margin-top:0; font-size: 16px;">Digital Material Passports &amp; Traceability</h3>
-        <p class="muted" style="line-height: 1.55; font-size: 13px;">Verifiable batch passports with QR codes and auditable verification event logs documenting lot intake, aggregation, and physical QA confirmation.</p>
+        <div style="font-size: 20px; font-weight: 800; color: var(--primary-forest); margin-bottom: 6px;">06</div>
+        <h3 style="margin-top:0; font-size: 16px;">Digital Material Passports</h3>
+        <p class="muted" style="line-height: 1.55; font-size: 13px;">Verifiable batch certificates with QR codes, composition breakdowns, and auditable immutable event logs documenting lot intake, aggregation, QA confirmation, and chain of custody.</p>
         <a href="/passports" class="insight-action" style="font-size: 12px;">Verify Passports &rarr;</a>
       </div>
-      <div class="card">
-        <div style="font-size: 22px; font-weight: 800; color: var(--primary-forest); margin-bottom: 6px;">06</div>
-        <h3 style="margin-top:0; font-size: 16px;">Evidence-Based Circularity Reporting</h3>
-        <p class="muted" style="line-height: 1.55; font-size: 13px;">Strictly empirical mass-balance reporting aligned with SDG 12 (Responsible Consumption &amp; Production) with zero-greenwashing environmental boundary disclosures.</p>
-        <a href="/reports" class="insight-action" style="font-size: 12px;">Review Impact Reports &rarr;</a>
+
+      <!-- Capability 7: Impact Analytics -->
+      <div class="card" style="grid-column: 1 / -1;">
+        <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;">
+          <div>
+            <div style="font-size: 20px; font-weight: 800; color: var(--primary-forest); margin-bottom: 6px;">07</div>
+            <h3 style="margin-top:0; font-size: 16px;">Impact Analytics &amp; Empirical Reporting</h3>
+            <p class="muted" style="line-height: 1.55; font-size: 13px; max-width: 780px;">Strictly empirical mass-balance reporting aligned with SDG 12 (Responsible Consumption &amp; Production) tracking landfill diversion tons, water conservation, and transparent greenhouse gas estimates with explicit methodology disclosures.</p>
+          </div>
+          <a href="/reports" class="btn btn-sm btn-outline" style="text-decoration: none;">Review Impact Reports &rarr;</a>
+        </div>
       </div>
     </div>
 
-    <!-- Judge-Friendly Introduction: Problem vs Solution -->
+    <!-- The Problem vs The Solution -->
     <div class="overview-section-header">
       <h3>The Problem PunorAI Addresses vs. The PunorAI Solution</h3>
       <div class="muted" style="font-size: 13px;">Bridging the structural gap between fragmented cutting floors and industrial textile recycling facilities</div>
@@ -573,7 +937,7 @@ def page_landing():
       </div>
     </div>
 
-    <!-- Stakeholder Value Matrix: Who Benefits -->
+    <!-- Stakeholder Value Matrix -->
     <div class="overview-section-header">
       <h3>Stakeholder Value Matrix &mdash; Who Benefits from PunorAI</h3>
       <div class="muted" style="font-size: 13px;">Aligning incentives across the complete textile circularity value chain in Bangladesh</div>
@@ -613,7 +977,7 @@ def page_landing():
       </div>
     </div>
 
-    <!-- What Makes PunorAI Distinct: Pillars of Trust -->
+    <!-- Pillars of Trust -->
     <div class="overview-section-header">
       <h3>What Makes PunorAI Distinct: Explainability &amp; Integrity</h3>
       <div class="muted" style="font-size: 13px;">Engineered for technical rigor, operational clarity, and anti-greenwashing transparency</div>
@@ -636,22 +1000,30 @@ def page_landing():
       </div>
     </div>
 
-    <!-- Compact Platform Exploration Row -->
-    <div class="card overview-explore-row" style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px; padding: 16px 20px;">
+    <!-- Bottom Exploration Row -->
+    <div class="card overview-explore-row" style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px; padding: 18px 22px;">
       <div style="display: flex; align-items: center; gap: 12px;">
-        <div style="width: 36px; height: 36px; border-radius: 8px; background: rgba(16, 185, 129, 0.12); display: flex; align-items: center; justify-content: center; color: #10B981; flex-shrink: 0;">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <div style="width: 38px; height: 38px; border-radius: 8px; background: rgba(16, 185, 129, 0.12); display: flex; align-items: center; justify-content: center; color: #10B981; flex-shrink: 0;">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <polygon points="5 3 19 12 5 21 5 3"/>
           </svg>
         </div>
         <div>
-          <div style="font-weight: 700; font-size: 14px; color: var(--text-main);">Explore the Live Platform</div>
-          <div class="muted" style="font-size: 12.5px;">Direct access to real-time inventory diagnostics, multi-objective batch optimization, and digital material passports.</div>
+          <div style="font-weight: 700; font-size: 14.5px; color: var(--text-main);">Launch Role Workspace or Analytical Tool</div>
+          <div class="muted" style="font-size: 12.5px;">Choose your operational portal or inspect real-time platform optimization engines.</div>
         </div>
       </div>
       <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
-        <a href="/dashboard" class="btn btn-sm btn-primary" style="text-decoration: none; display: inline-flex; align-items: center; gap: 6px;">
-          <span>View Dashboard</span>
+        <a href="/seller" class="btn btn-sm btn-primary" style="text-decoration: none; display: inline-flex; align-items: center; gap: 6px;">
+          <span>Seller Portal</span>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
+        </a>
+        <a href="/buyer" class="btn btn-sm btn-primary" style="text-decoration: none; display: inline-flex; align-items: center; gap: 6px;">
+          <span>Buyer Portal</span>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
+        </a>
+        <a href="/admin" class="btn btn-sm btn-outline" style="text-decoration: none; display: inline-flex; align-items: center; gap: 6px;">
+          <span>Admin Center</span>
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
         </a>
         <a href="/aggregation" class="btn btn-sm btn-outline" style="text-decoration: none; display: inline-flex; align-items: center; gap: 6px;">
@@ -660,7 +1032,9 @@ def page_landing():
         </a>
       </div>
     </div>""")
-    return layout("Platform Overview", "/", body, "Platform Overview")
+    return layout("Platform Overview", "/overview", body, "Platform Overview")
+
+page_landing = page_overview
 
 def page_dashboard():
     tl = conn.execute("SELECT COALESCE(SUM(qty_kg),0) s, COUNT(*) n FROM lots").fetchone()
@@ -1737,41 +2111,794 @@ def api_simulate_intake(payload):
         "msg": f"New Waste Intake Registered: {code} ({int(qty_kg)}kg {category.title()})"
     }
 
-ROUTES_GET = {"/": page_landing, "/overview": page_landing, "/dashboard": page_dashboard, "/lots": lambda: page_lots(),
-              "/aggregation": page_aggregation, "/aggregation-planner": page_aggregation,
-              "/buyers": page_buyers, "/planning": page_planning, "/passports": page_passports, "/reports": page_reports}
-API_POST = {"/api/lots": api_lots, "/api/aggregate": api_aggregate, "/api/batches": api_batches, "/api/reset": api_reset, "/api/simulate-intake": api_simulate_intake}
+
+# ==============================================================================
+# PHASE 2: AUTHENTICATION & ROLE-BASED ACCESS CONTROL
+# ==============================================================================
+
+def generate_login_html(msg="", error="", redirect_target="/", role=""):
+    role = (role or "").strip().lower()
+    msg_html = f'<div class="auth-alert auth-alert-success">{e(msg)}</div>' if msg else ''
+    err_html = f'<div class="auth-alert auth-alert-error">{e(error)}</div>' if error else ''
+
+    presets = {
+        "admin": {
+            "title": "Admin Login",
+            "subtitle": "Sign in to your Admin workspace",
+            "btn_role": "Admin",
+            "btn_name": "Control",
+            "email": "admin@punorai.com",
+            "pass": "Admin@Punor2026!"
+        },
+        "seller": {
+            "title": "Seller Login",
+            "subtitle": "Sign in to your Seller workspace",
+            "btn_role": "Seller",
+            "btn_name": "Shanto Mill",
+            "email": "seller@shanto.com",
+            "pass": "Seller@Punor2026!"
+        },
+        "buyer": {
+            "title": "Buyer Login",
+            "subtitle": "Sign in to your Buyer workspace",
+            "btn_role": "Buyer",
+            "btn_name": "Recycler X",
+            "email": "buyer@recycler.com",
+            "pass": "Buyer@Punor2026!"
+        }
+    }
+
+    if role in presets:
+        p = presets[role]
+        page_title = f"PunorAI — {p['title']}"
+        auth_title = p["title"]
+        auth_subtitle = p["subtitle"]
+        default_email = p["email"]
+        default_pass = p["pass"]
+
+        # Only show the selected role's demo button inside 1-CLICK DEMO ACCOUNTS
+        demo_buttons_html = f'''
+          <button type="button" class="demo-pill-btn active" onclick="selectDemo('{role}', this)">
+            <span class="demo-pill-role">{p['btn_role']}</span>
+            <span class="demo-pill-name">{p['btn_name']}</span>
+          </button>
+        '''
+
+        # Admin view: hide registration link completely; Seller/Buyer: tailored registration link
+        if role == "admin":
+            footer_register_html = ""
+        elif role == "seller":
+            footer_register_html = '<div>Don\'t have an account? <a href="/register?role=seller" style="color: #10B981; font-weight: 600;">Register as a Seller</a></div>'
+        elif role == "buyer":
+            footer_register_html = '<div>Don\'t have an account? <a href="/register?role=buyer" style="color: #10B981; font-weight: 600;">Register as a Buyer</a></div>'
+    else:
+        # General Login View (navigated via top-right "Demo Login" button in navbar without role parameter)
+        page_title = "PunorAI — Sign In"
+        auth_title = "Welcome Back"
+        auth_subtitle = "Sign in to your role-based circular textile workspace"
+        default_email = "admin@punorai.com"
+        default_pass = "Admin@Punor2026!"
+
+        # Show all three role tabs
+        demo_buttons_html = '''
+          <button type="button" class="demo-pill-btn active" onclick="selectDemo('admin', this)">
+            <span class="demo-pill-role">Admin</span>
+            <span class="demo-pill-name">Control</span>
+          </button>
+          <button type="button" class="demo-pill-btn" onclick="selectDemo('seller', this)">
+            <span class="demo-pill-role">Seller</span>
+            <span class="demo-pill-name">Shanto Mill</span>
+          </button>
+          <button type="button" class="demo-pill-btn" onclick="selectDemo('buyer', this)">
+            <span class="demo-pill-role">Buyer</span>
+            <span class="demo-pill-name">Recycler X</span>
+          </button>
+        '''
+
+        footer_register_html = '<div>Don\'t have an account? <a href="/register" style="color: #10B981; font-weight: 600;">Register as Seller or Buyer</a></div>'
+
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{page_title}</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="auth-page-body">
+  <div class="auth-container">
+    <div class="auth-card">
+      <div class="auth-brand-header">
+        {render_brand_logo(href="/", extra_class="brand-link", id_prefix="login", size=28, inline_styles="justify-content: center; margin-bottom: 16px;", brand_name_style="font-size: 20px;")}
+        <h1 class="auth-title">{auth_title}</h1>
+        <p class="auth-subtitle">{auth_subtitle}</p>
+      </div>
+
+      <!-- Quick Demo Account Switcher -->
+      <div class="auth-demo-box">
+        <div class="auth-demo-label">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+          <span>1-Click Demo Accounts:</span>
+        </div>
+        <div class="auth-demo-buttons">
+          {demo_buttons_html}
+        </div>
+      </div>
+
+      <div id="loginAlert" class="auth-alert" style="display: none;"></div>
+      {msg_html}
+      {err_html}
+
+      <form id="loginForm" onsubmit="handleLogin(event)">
+        <input type="hidden" id="loginRedirect" value="{e(redirect_target)}">
+        
+        <div class="form-group" style="margin-bottom: 16px;">
+          <label class="form-label" for="loginEmail" style="color: #CBD5E1; font-size: 13px; font-weight: 600; margin-bottom: 6px; display: block;">Email Address</label>
+          <input type="email" id="loginEmail" class="form-control" value="{e(default_email)}" required autocomplete="email" style="background: rgba(7,13,11,0.8); border: 1px solid rgba(255,255,255,0.12); color: #fff; padding: 10px 14px; border-radius: 8px; width: 100%; box-sizing: border-box;">
+        </div>
+
+        <div class="form-group" style="margin-bottom: 22px;">
+          <label class="form-label" for="loginPassword" style="color: #CBD5E1; font-size: 13px; font-weight: 600; margin-bottom: 6px; display: block;">Password</label>
+          <input type="password" id="loginPassword" class="form-control" value="{e(default_pass)}" required autocomplete="current-password" style="background: rgba(7,13,11,0.8); border: 1px solid rgba(255,255,255,0.12); color: #fff; padding: 10px 14px; border-radius: 8px; width: 100%; box-sizing: border-box;">
+        </div>
+
+        <button type="submit" id="loginBtn" class="btn btn-primary" style="width: 100%; justify-content: center; padding: 12px; font-size: 15px; font-weight: 600; border-radius: 8px;">
+          <span>Sign In</span>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+        </button>
+      </form>
+
+      <div class="auth-footer-links">
+        {footer_register_html}
+        <div style="margin-top: 10px;"><a href="/" style="color: #94A3B8; font-size: 13px; text-decoration: none;">&larr; Back to Public Landing Page</a></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const demoCreds = {{
+      admin: {{ email: 'admin@punorai.com', pass: 'Admin@Punor2026!' }},
+      seller: {{ email: 'seller@shanto.com', pass: 'Seller@Punor2026!' }},
+      buyer: {{ email: 'buyer@recycler.com', pass: 'Buyer@Punor2026!' }}
+    }};
+
+    function selectDemo(role, el) {{
+      document.querySelectorAll('.demo-pill-btn').forEach(b => b.classList.remove('active'));
+      if (el) el.classList.add('active');
+      const c = demoCreds[role];
+      if (c) {{
+        document.getElementById('loginEmail').value = c.email;
+        document.getElementById('loginPassword').value = c.pass;
+      }}
+    }}
+
+    async function handleLogin(e) {{
+      e.preventDefault();
+      const btn = document.getElementById('loginBtn');
+      const alert = document.getElementById('loginAlert');
+      btn.disabled = true;
+      btn.innerHTML = '<span>Signing in...</span>';
+      alert.style.display = 'none';
+
+      try {{
+        const res = await fetch('/api/auth/login', {{
+          method: 'POST',
+          headers: {{ 'Content-Type': 'application/json' }},
+          body: JSON.stringify({{
+            email: document.getElementById('loginEmail').value,
+            password: document.getElementById('loginPassword').value,
+            redirect: document.getElementById('loginRedirect').value
+          }})
+        }});
+        const data = await res.json();
+        if (data.ok) {{
+          alert.className = 'auth-alert auth-alert-success';
+          alert.textContent = 'Authenticated successfully! Redirecting...';
+          alert.style.display = 'block';
+          setTimeout(() => {{
+            window.location.href = data.redirect || '/';
+          }}, 400);
+        }} else {{
+          alert.className = 'auth-alert auth-alert-error';
+          alert.textContent = data.error || 'Invalid credentials.';
+          alert.style.display = 'block';
+          btn.disabled = false;
+          btn.innerHTML = '<span>Sign In</span>';
+        }}
+      }} catch(err) {{
+        alert.className = 'auth-alert auth-alert-error';
+        alert.textContent = 'Network or server error. Please try again.';
+        alert.style.display = 'block';
+        btn.disabled = false;
+        btn.innerHTML = '<span>Sign In</span>';
+      }}
+    }}
+  </script>
+</body>
+</html>"""
+
+
+
+
+def generate_register_html(msg="", error="", role="seller"):
+    role = (role or "seller").strip().lower()
+    if role not in ("seller", "buyer"):
+        role = "seller"
+    msg_html = f'<div class="auth-alert auth-alert-success">{e(msg)}</div>' if msg else ''
+    err_html = f'<div class="auth-alert auth-alert-error">{e(error)}</div>' if error else ''
+
+    seller_tab_cls = "auth-role-tab active" if role == "seller" else "auth-role-tab"
+    buyer_tab_cls = "auth-role-tab active" if role == "buyer" else "auth-role-tab"
+    loc_lbl = "Garment Mill / Facility Location" if role == "seller" else "Recycler / Brand HQ Location"
+    loc_ph = "e.g. Gazipur, Ashulia, Savar" if role == "seller" else "e.g. Dhaka, Narayanganj"
+
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>PunorAI — Create Account</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="auth-page-body">
+  <div class="auth-container" style="max-width: 480px;">
+    <div class="auth-card">
+      <div class="auth-brand-header">
+        {render_brand_logo(href="/", extra_class="brand-link", id_prefix="reg", size=28, inline_styles="justify-content: center; margin-bottom: 16px;", brand_name_style="font-size: 20px;")}
+        <h1 class="auth-title">Create Your Account</h1>
+        <p class="auth-subtitle">Join Bangladesh's premier circular textile recovery network</p>
+      </div>
+
+      <!-- Role Selection Tabs -->
+      <div class="auth-role-tabs">
+        <div class="{seller_tab_cls}" onclick="selectRole('seller', this)">
+          <span class="auth-role-tab-title">Seller Workspace</span>
+          <span class="auth-role-tab-sub">Waste Supplier / Mill</span>
+        </div>
+        <div class="{buyer_tab_cls}" onclick="selectRole('buyer', this)">
+          <span class="auth-role-tab-title">Buyer Workspace</span>
+          <span class="auth-role-tab-sub">Recycler / Brand</span>
+        </div>
+      </div>
+
+      <div style="font-size: 11.5px; color: #94A3B8; margin-bottom: 18px; background: rgba(255,255,255,0.03); padding: 8px 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.08); display: flex; align-items: center; gap: 8px;">
+        <span style="color: #F59E0B; font-size: 14px;">🔒</span>
+        <span><strong>Governance:</strong> Admin accounts are managed by platform governance and cannot be registered publicly.</span>
+      </div>
+
+      <div id="regAlert" class="auth-alert" style="display: none;"></div>
+      {msg_html}
+      {err_html}
+
+      <form id="regForm" onsubmit="handleRegister(event)">
+        <div class="form-group" style="margin-bottom: 14px;">
+          <label class="form-label" for="regOrg" style="color: #CBD5E1; font-size: 13px; font-weight: 600; margin-bottom: 6px; display: block;">Company / Facility Name</label>
+          <input type="text" id="regOrg" class="form-control" placeholder="e.g. Bengal Fabrics &amp; Spinning Ltd" required style="background: rgba(7,13,11,0.8); border: 1px solid rgba(255,255,255,0.12); color: #fff; padding: 10px 14px; border-radius: 8px; width: 100%; box-sizing: border-box;">
+        </div>
+
+        <div class="form-group" style="margin-bottom: 14px;">
+          <label class="form-label" id="locLabel" for="regLocation" style="color: #CBD5E1; font-size: 13px; font-weight: 600; margin-bottom: 6px; display: block;">Garment Mill / Facility Location</label>
+          <input type="text" id="regLocation" class="form-control" placeholder="e.g. Gazipur, Ashulia, Savar" required style="background: rgba(7,13,11,0.8); border: 1px solid rgba(255,255,255,0.12); color: #fff; padding: 10px 14px; border-radius: 8px; width: 100%; box-sizing: border-box;">
+        </div>
+
+        <div class="form-group" style="margin-bottom: 14px;">
+          <label class="form-label" for="regEmail" style="color: #CBD5E1; font-size: 13px; font-weight: 600; margin-bottom: 6px; display: block;">Work Email Address</label>
+          <input type="email" id="regEmail" class="form-control" placeholder="name@company.com" required autocomplete="email" style="background: rgba(7,13,11,0.8); border: 1px solid rgba(255,255,255,0.12); color: #fff; padding: 10px 14px; border-radius: 8px; width: 100%; box-sizing: border-box;">
+        </div>
+
+        <div class="form-group" style="margin-bottom: 14px;">
+          <label class="form-label" for="regPassword" style="color: #CBD5E1; font-size: 13px; font-weight: 600; margin-bottom: 6px; display: block;">Password (min. 8 characters)</label>
+          <input type="password" id="regPassword" class="form-control" minlength="8" placeholder="Create strong password" required autocomplete="new-password" style="background: rgba(7,13,11,0.8); border: 1px solid rgba(255,255,255,0.12); color: #fff; padding: 10px 14px; border-radius: 8px; width: 100%; box-sizing: border-box;">
+        </div>
+
+        <div class="form-group" style="margin-bottom: 22px;">
+          <label class="form-label" for="regPasswordConfirm" style="color: #CBD5E1; font-size: 13px; font-weight: 600; margin-bottom: 6px; display: block;">Confirm Password</label>
+          <input type="password" id="regPasswordConfirm" class="form-control" minlength="8" placeholder="Repeat password" required autocomplete="new-password" style="background: rgba(7,13,11,0.8); border: 1px solid rgba(255,255,255,0.12); color: #fff; padding: 10px 14px; border-radius: 8px; width: 100%; box-sizing: border-box;">
+        </div>
+
+        <button type="submit" id="regBtn" class="btn btn-primary" style="width: 100%; justify-content: center; padding: 12px; font-size: 15px; font-weight: 600; border-radius: 8px;">
+          <span>Create Account &amp; Enter Workspace</span>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+        </button>
+      </form>
+
+      <div class="auth-footer-links">
+        <div>Already have an account? <a href="/login" style="color: #10B981; font-weight: 600;">Sign in here</a></div>
+        <div style="margin-top: 10px;"><a href="/" style="color: #94A3B8; font-size: 13px; text-decoration: none;">&larr; Back to Public Landing Page</a></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let selectedRole = '{role}';
+
+    function selectRole(r, el) {{
+      selectedRole = r;
+      document.querySelectorAll('.auth-role-tab').forEach(t => t.classList.remove('active'));
+      if (el) el.classList.add('active');
+      const locLabel = document.getElementById('locLabel');
+      const locInput = document.getElementById('regLocation');
+      if (r === 'seller') {{
+        locLabel.textContent = 'Garment Mill / Facility Location';
+        locInput.placeholder = 'e.g. Gazipur, Ashulia, Savar';
+      }} else {{
+        locLabel.textContent = 'Recycler / Brand HQ Location';
+        locInput.placeholder = 'e.g. Dhaka, Narayanganj';
+      }}
+    }}
+
+    async function handleRegister(e) {{
+      e.preventDefault();
+      const btn = document.getElementById('regBtn');
+      const alert = document.getElementById('regAlert');
+      const pass = document.getElementById('regPassword').value;
+      const passConf = document.getElementById('regPasswordConfirm').value;
+
+      if (pass !== passConf) {{
+        alert.className = 'auth-alert auth-alert-error';
+        alert.textContent = 'Passwords do not match.';
+        alert.style.display = 'block';
+        return;
+      }}
+
+      btn.disabled = true;
+      btn.innerHTML = '<span>Creating Account...</span>';
+      alert.style.display = 'none';
+
+      try {{
+        const res = await fetch('/api/auth/register', {{
+          method: 'POST',
+          headers: {{ 'Content-Type': 'application/json' }},
+          body: JSON.stringify({{
+            email: document.getElementById('regEmail').value,
+            password: pass,
+            role: selectedRole,
+            org_name: document.getElementById('regOrg').value,
+            location_name: document.getElementById('regLocation').value
+          }})
+        }});
+        const data = await res.json();
+        if (data.ok) {{
+          alert.className = 'auth-alert auth-alert-success';
+          alert.textContent = 'Account created successfully! Redirecting to workspace...';
+          alert.style.display = 'block';
+          setTimeout(() => {{
+            window.location.href = data.redirect || '/';
+          }}, 400);
+        }} else {{
+          alert.className = 'auth-alert auth-alert-error';
+          alert.textContent = data.error || 'Registration failed.';
+          alert.style.display = 'block';
+          btn.disabled = false;
+          btn.innerHTML = '<span>Create Account &amp; Enter Workspace</span>';
+        }}
+      }} catch(err) {{
+        alert.className = 'auth-alert auth-alert-error';
+        alert.textContent = 'Network or server error. Please try again.';
+        alert.style.display = 'block';
+        btn.disabled = false;
+        btn.innerHTML = '<span>Create Account &amp; Enter Workspace</span>';
+      }}
+    }}
+  </script>
+</body>
+</html>"""
+
+
+
+
+def page_login(handler=None):
+    user = None
+    target = "/"
+    msg = ""
+    error = ""
+    selected_role = ""
+    if handler and hasattr(handler, "path"):
+        parsed = urllib.parse.urlparse(handler.path)
+        qs = urllib.parse.parse_qs(parsed.query)
+        selected_role = qs.get("role", [""])[0].lower().strip()
+        if "redirect" in qs:
+            target = qs["redirect"][0]
+            if not selected_role:
+                first_seg = target.strip("/").split("/")[0].lower()
+                if first_seg in ("seller", "admin", "buyer"):
+                    selected_role = first_seg
+        elif selected_role in ("seller", "admin", "buyer"):
+            target = f"/{selected_role}"
+        else:
+            target = "/"
+        if "msg" in qs:
+            if qs["msg"][0] == "logged_out":
+                msg = "You have been signed out successfully."
+        if "error" in qs:
+            error = qs["error"][0]
+        user, _ = get_current_user(handler)
+
+    if user:
+        # If user is already authenticated with the selected role, redirect directly to their workspace
+        if selected_role and user.get("role") == selected_role and handler and hasattr(handler, "_redirect"):
+            handler._redirect(f"/{user['role']}")
+            return ""
+        role_dest = f"/{user['role']}"
+        return layout("Account Active", "/login", f'''
+            <div class="card" style="max-width: 540px; margin: 40px auto; text-align: center; padding: 40px 28px;">
+              <div style="font-size: 36px; margin-bottom: 12px;">✅</div>
+              <h2 style="color: #FFFFFF; margin-bottom: 8px;">Already Signed In</h2>
+              <p style="color: #94A3B8; margin-bottom: 24px;">You are currently signed in as <strong>{e(user['org_name'])}</strong> ({user['role'].title()}).</p>
+              <div style="display: flex; gap: 12px; justify-content: center;">
+                <a href="{role_dest}" class="btn btn-primary">Go to {user['role'].title()} Workspace</a>
+                <a href="/logout" class="btn btn-outline" style="color: #EF4444; border-color: rgba(239,68,68,0.4);">Sign Out</a>
+              </div>
+            </div>
+        ''', user=user)
+
+    return generate_login_html(msg=msg, error=error, redirect_target=target, role=selected_role)
+
+def page_register(handler=None):
+    user = None
+    role = "seller"
+    if handler and hasattr(handler, "path"):
+        parsed = urllib.parse.urlparse(handler.path)
+        qs = urllib.parse.parse_qs(parsed.query)
+        if "role" in qs and qs["role"][0].lower() in ("seller", "buyer"):
+            role = qs["role"][0].lower()
+    if handler and hasattr(handler, "headers"):
+        user, _ = get_current_user(handler)
+    if user:
+        return page_login(handler)
+    return generate_register_html(role=role)
+
+def page_admin_entry(handler):
+    user, csrf = get_current_user(handler)
+    if not user:
+        handler._redirect("/login?redirect=/admin")
+        return None
+    if user["role"] != "admin":
+        return layout("Access Denied", "/admin", f'''
+            <div class="card" style="max-width: 600px; margin: 40px auto; text-align: center; padding: 40px 24px;">
+              <div style="font-size: 40px; margin-bottom: 16px;">🚫</div>
+              <h2 style="color: #EF4444; margin-bottom: 12px;">Access Denied — Admin Role Required</h2>
+              <p style="color: #94A3B8; margin-bottom: 24px;">Your account ({e(user['email'])}) is registered as a <strong>{user['role'].title()}</strong>. You do not have permission to access the Admin Control Center.</p>
+              <a href="/{user['role']}" class="btn btn-primary">Go to Your {user['role'].title()} Workspace</a>
+            </div>
+        ''', user=user)
+    return layout("Admin Control Center", "/admin", f'''
+        <div class="card" style="max-width: 800px; margin: 24px auto; padding: 36px 32px; background: rgba(14,23,30,0.85); border: 1px solid rgba(16,185,129,0.3); border-radius: 16px;">
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px;">
+            <div style="display: flex; align-items: center; gap: 12px;">
+              <span class="badge b-verified" style="font-size: 13px; padding: 6px 12px;">Admin Session Active</span>
+              <span style="color: #94A3B8; font-size: 13px;">Phase 2 Authenticated</span>
+            </div>
+            <a href="/logout" class="btn btn-sm btn-outline" style="border-color: rgba(239,68,68,0.4); color: #EF4444; text-decoration: none;">Sign Out</a>
+          </div>
+          <h2 style="color: #FFFFFF; font-size: 24px; margin-bottom: 8px;">PunorAI Admin Control Center</h2>
+          <p style="color: #94A3B8; font-size: 14.5px; line-height: 1.6; margin-bottom: 24px;">
+            Welcome, <strong>{e(user['org_name'])}</strong> (<code style="color:#10B981;">{e(user['email'])}</code>). Backend authorization and session security are active.
+          </p>
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-bottom: 24px;">
+            <div style="background: rgba(16,185,129,0.08); border: 1px solid rgba(16,185,129,0.2); border-radius: 12px; padding: 18px;">
+              <div style="color: #94A3B8; font-size: 12px; font-weight: 600; text-transform: uppercase;">Authenticated Role</div>
+              <div style="color: #10B981; font-size: 18px; font-weight: 700; margin-top: 4px;">Platform Admin</div>
+            </div>
+            <div style="background: rgba(16,185,129,0.08); border: 1px solid rgba(16,185,129,0.2); border-radius: 12px; padding: 18px;">
+              <div style="color: #94A3B8; font-size: 12px; font-weight: 600; text-transform: uppercase;">Session Security</div>
+              <div style="color: #FFFFFF; font-size: 18px; font-weight: 700; margin-top: 4px;">PBKDF2 + CSRF</div>
+            </div>
+            <div style="background: rgba(16,185,129,0.08); border: 1px solid rgba(16,185,129,0.2); border-radius: 12px; padding: 18px;">
+              <div style="color: #94A3B8; font-size: 12px; font-weight: 600; text-transform: uppercase;">Phase 3 Milestone</div>
+              <div style="color: #A3E635; font-size: 18px; font-weight: 700; margin-top: 4px;">Control Center Ready</div>
+            </div>
+          </div>
+          <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+            <a href="/admin" class="btn btn-primary">Open Admin Control Center</a>
+            <a href="/aggregation" class="btn btn-outline">Aggregation Planner</a>
+            <a href="/passports" class="btn btn-outline">Material Passports</a>
+          </div>
+        </div>
+    ''', user=user)
+
+def page_seller_entry(handler):
+    user, csrf = get_current_user(handler)
+    if not user:
+        handler._redirect("/login?redirect=/seller")
+        return None
+    if user["role"] not in ("seller", "admin"):
+        return layout("Access Denied", "/seller", f'''
+            <div class="card" style="max-width: 600px; margin: 40px auto; text-align: center; padding: 40px 24px;">
+              <div style="font-size: 40px; margin-bottom: 16px;">🚫</div>
+              <h2 style="color: #EF4444; margin-bottom: 12px;">Access Denied — Seller Role Required</h2>
+              <p style="color: #94A3B8; margin-bottom: 24px;">Your account ({e(user['email'])}) is registered as a <strong>{user['role'].title()}</strong>. You do not have permission to access the Seller Workspace.</p>
+              <a href="/{user['role']}" class="btn btn-primary">Go to Your {user['role'].title()} Workspace</a>
+            </div>
+        ''', user=user)
+    return layout("Seller Workspace", "/seller", f'''
+        <div class="card" style="max-width: 800px; margin: 24px auto; padding: 36px 32px; background: rgba(14,23,30,0.85); border: 1px solid rgba(16,185,129,0.3); border-radius: 16px;">
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px;">
+            <div style="display: flex; align-items: center; gap: 12px;">
+              <span class="badge b-verified" style="font-size: 13px; padding: 6px 12px;">Seller Session Active</span>
+              <span style="color: #94A3B8; font-size: 13px;">Phase 2 Authenticated</span>
+            </div>
+            <a href="/logout" class="btn btn-sm btn-outline" style="border-color: rgba(239,68,68,0.4); color: #EF4444; text-decoration: none;">Sign Out</a>
+          </div>
+          <h2 style="color: #FFFFFF; font-size: 24px; margin-bottom: 8px;">PunorAI Waste Supplier Workspace</h2>
+          <p style="color: #94A3B8; font-size: 14.5px; line-height: 1.6; margin-bottom: 24px;">
+            Welcome, <strong>{e(user['org_name'])}</strong> (<code style="color:#10B981;">{e(user['email'])}</code>). Facility location: <strong>{e(user.get('location_name') or 'Gazipur')}</strong>.
+          </p>
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-bottom: 24px;">
+            <div style="background: rgba(16,185,129,0.08); border: 1px solid rgba(16,185,129,0.2); border-radius: 12px; padding: 18px;">
+              <div style="color: #94A3B8; font-size: 12px; font-weight: 600; text-transform: uppercase;">Supplier Role</div>
+              <div style="color: #10B981; font-size: 18px; font-weight: 700; margin-top: 4px;">Verified Mill</div>
+            </div>
+            <div style="background: rgba(16,185,129,0.08); border: 1px solid rgba(16,185,129,0.2); border-radius: 12px; padding: 18px;">
+              <div style="color: #94A3B8; font-size: 12px; font-weight: 600; text-transform: uppercase;">Session Security</div>
+              <div style="color: #FFFFFF; font-size: 18px; font-weight: 700; margin-top: 4px;">PBKDF2 + CSRF</div>
+            </div>
+            <div style="background: rgba(16,185,129,0.08); border: 1px solid rgba(16,185,129,0.2); border-radius: 12px; padding: 18px;">
+              <div style="color: #94A3B8; font-size: 12px; font-weight: 600; text-transform: uppercase;">Phase 4 Milestone</div>
+              <div style="color: #A3E635; font-size: 18px; font-weight: 700; margin-top: 4px;">Supplier Workspace Ready</div>
+            </div>
+          </div>
+          <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+            <a href="/lots" class="btn btn-primary">Browse Waste Inventory</a>
+            <a href="/buyers" class="btn btn-outline">Explore Recycler Demand</a>
+            <a href="/reports" class="btn btn-outline">Circular Impact</a>
+          </div>
+        </div>
+    ''', user=user)
+
+def page_buyer_entry(handler):
+    user, csrf = get_current_user(handler)
+    if not user:
+        handler._redirect("/login?redirect=/buyer")
+        return None
+    if user["role"] not in ("buyer", "admin"):
+        return layout("Access Denied", "/buyer", f'''
+            <div class="card" style="max-width: 600px; margin: 40px auto; text-align: center; padding: 40px 24px;">
+              <div style="font-size: 40px; margin-bottom: 16px;">🚫</div>
+              <h2 style="color: #EF4444; margin-bottom: 12px;">Access Denied — Buyer Role Required</h2>
+              <p style="color: #94A3B8; margin-bottom: 24px;">Your account ({e(user['email'])}) is registered as a <strong>{user['role'].title()}</strong>. You do not have permission to access the Procurement Workspace.</p>
+              <a href="/{user['role']}" class="btn btn-primary">Go to Your {user['role'].title()} Workspace</a>
+            </div>
+        ''', user=user)
+    return layout("Procurement Workspace", "/buyer", f'''
+        <div class="card" style="max-width: 800px; margin: 24px auto; padding: 36px 32px; background: rgba(14,23,30,0.85); border: 1px solid rgba(16,185,129,0.3); border-radius: 16px;">
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px;">
+            <div style="display: flex; align-items: center; gap: 12px;">
+              <span class="badge b-verified" style="font-size: 13px; padding: 6px 12px;">Buyer Session Active</span>
+              <span style="color: #94A3B8; font-size: 13px;">Phase 2 Authenticated</span>
+            </div>
+            <a href="/logout" class="btn btn-sm btn-outline" style="border-color: rgba(239,68,68,0.4); color: #EF4444; text-decoration: none;">Sign Out</a>
+          </div>
+          <h2 style="color: #FFFFFF; font-size: 24px; margin-bottom: 8px;">PunorAI Procurement Workspace</h2>
+          <p style="color: #94A3B8; font-size: 14.5px; line-height: 1.6; margin-bottom: 24px;">
+            Welcome, <strong>{e(user['org_name'])}</strong> (<code style="color:#10B981;">{e(user['email'])}</code>). Intake hub: <strong>{e(user.get('location_name') or 'Dhaka')}</strong>.
+          </p>
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-bottom: 24px;">
+            <div style="background: rgba(16,185,129,0.08); border: 1px solid rgba(16,185,129,0.2); border-radius: 12px; padding: 18px;">
+              <div style="color: #94A3B8; font-size: 12px; font-weight: 600; text-transform: uppercase;">Procurement Role</div>
+              <div style="color: #10B981; font-size: 18px; font-weight: 700; margin-top: 4px;">Responsible Buyer</div>
+            </div>
+            <div style="background: rgba(16,185,129,0.08); border: 1px solid rgba(16,185,129,0.2); border-radius: 12px; padding: 18px;">
+              <div style="color: #94A3B8; font-size: 12px; font-weight: 600; text-transform: uppercase;">Session Security</div>
+              <div style="color: #FFFFFF; font-size: 18px; font-weight: 700; margin-top: 4px;">PBKDF2 + CSRF</div>
+            </div>
+            <div style="background: rgba(16,185,129,0.08); border: 1px solid rgba(16,185,129,0.2); border-radius: 12px; padding: 18px;">
+              <div style="color: #94A3B8; font-size: 12px; font-weight: 600; text-transform: uppercase;">Phase 5 Milestone</div>
+              <div style="color: #A3E635; font-size: 18px; font-weight: 700; margin-top: 4px;">Buyer Workspace Ready</div>
+            </div>
+          </div>
+          <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+            <a href="/buyers" class="btn btn-primary">Browse Recycler Directory</a>
+            <a href="/passports" class="btn btn-outline">Verified Passports</a>
+            <a href="/lots" class="btn btn-outline">Explore Materials</a>
+          </div>
+        </div>
+    ''', user=user)
+
+def api_auth_login(handler, payload):
+    email = (payload.get("email") or "").strip()
+    password = payload.get("password") or ""
+    user = auth.authenticate_user(conn, email, password)
+    if not user:
+        return {"ok": False, "error": "Invalid email or password."}
+    sess = auth.create_session(conn, user["id"], duration_hours=24)
+    is_secure = is_public_url(BASE_URL)
+    cookie_hdr = auth.make_session_cookie(sess["session_id"], is_secure=is_secure)
+    target = payload.get("redirect")
+    if not target or target.startswith("/login"):
+        target = "/admin" if user["role"] == "admin" else "/seller" if user["role"] == "seller" else "/buyer"
+    return {
+        "ok": True,
+        "user": user,
+        "csrf_token": sess["csrf_token"],
+        "redirect": target,
+        "_cookie": cookie_hdr
+    }
+
+def api_auth_register(handler, payload):
+    role = (payload.get("role") or "").strip().lower()
+    if role == "admin":
+        return {"ok": False, "error": "Public registration as Admin is forbidden. Admin accounts are managed by platform governance."}
+    if role not in ("seller", "buyer"):
+        return {"ok": False, "error": "Please select either Seller or Buyer role."}
+    email = (payload.get("email") or "").strip()
+    password = payload.get("password") or ""
+    org_name = (payload.get("org_name") or "").strip()
+    location_name = (payload.get("location_name") or "").strip()
+    try:
+        new_user = auth.register_user(conn, email, password, role, org_name, location_name)
+        sess = auth.create_session(conn, new_user["id"], duration_hours=24)
+        is_secure = is_public_url(BASE_URL)
+        cookie_hdr = auth.make_session_cookie(sess["session_id"], is_secure=is_secure)
+        redirect_url = "/seller" if new_user["role"] == "seller" else "/buyer"
+        return {
+            "ok": True,
+            "user": new_user,
+            "csrf_token": sess["csrf_token"],
+            "redirect": redirect_url,
+            "_cookie": cookie_hdr
+        }
+    except ValueError as ve:
+        return {"ok": False, "error": str(ve)}
+
+def api_auth_logout(handler, payload):
+    sid = auth.extract_session_id(handler.headers)
+    if sid:
+        auth.delete_session(conn, sid)
+    is_secure = is_public_url(BASE_URL)
+    cookie_hdr = auth.make_delete_cookie(is_secure=is_secure)
+    return {"ok": True, "redirect": "/login?msg=logged_out", "_cookie": cookie_hdr}
+
+ROUTES_GET = {
+    "/": page_home, "/home": page_home, "/overview": page_overview, "/dashboard": page_dashboard,
+    "/lots": lambda: page_lots(), "/aggregation": page_aggregation, "/aggregation-planner": page_aggregation,
+    "/buyers": page_buyers, "/planning": page_planning, "/passports": page_passports, "/reports": page_reports,
+    "/login": page_login, "/register": page_register,
+    "/admin": lambda h: admin.page_admin_overview(h, conn),
+    "/admin/overview": lambda h: admin.page_admin_overview(h, conn),
+    "/admin/users": lambda h: admin.page_admin_users(h, conn),
+    "/admin/verification": lambda h: admin.page_admin_verification(h, conn),
+    "/admin/requests": lambda h: admin.page_admin_requests(h, conn),
+    "/admin/aggregation": lambda h: admin.admin_proxy_page(h, "aggregation", conn, page_aggregation_fn=page_aggregation),
+    "/admin/planning": lambda h: admin.admin_proxy_page(h, "planning", conn, page_planning_fn=page_planning),
+    "/admin/passports": lambda h: admin.admin_proxy_page(h, "passports", conn, page_passports_fn=page_passports),
+    "/admin/impact": lambda h: admin.admin_proxy_page(h, "reports", conn, page_reports_fn=page_reports),
+    "/admin/reports": lambda h: admin.admin_proxy_page(h, "reports", conn, page_reports_fn=page_reports),
+    "/admin/settings": lambda h: admin.page_admin_settings(h, conn),
+    "/seller": lambda h: seller.page_seller_dashboard(h, conn),
+    "/seller/dashboard": lambda h: seller.page_seller_dashboard(h, conn),
+    "/seller/overview": lambda h: seller.page_seller_dashboard(h, conn),
+    "/seller/inventory": lambda h: seller.page_seller_inventory(h, conn),
+    "/seller/submit": lambda h: seller.page_seller_submit(h, conn),
+    "/seller/verification": lambda h: seller.page_seller_verification(h, conn),
+    "/seller/requests": lambda h: seller.page_seller_requests(h, conn),
+    "/seller/transactions": lambda h: seller.page_seller_transactions(h, conn),
+    "/seller/passports": lambda h: seller.page_seller_passports(h, conn),
+    "/seller/settings": lambda h: seller.page_seller_settings(h, conn),
+    "/buyer": lambda h: buyer.page_buyer_dashboard(h, conn),
+    "/buyer/dashboard": lambda h: buyer.page_buyer_dashboard(h, conn),
+    "/buyer/overview": lambda h: buyer.page_buyer_dashboard(h, conn),
+    "/buyer/materials": lambda h: buyer.page_buyer_materials(h, conn),
+    "/buyer/saved": lambda h: buyer.page_buyer_saved(h, conn),
+    "/buyer/requests": lambda h: buyer.page_buyer_requests(h, conn),
+    "/buyer/orders": lambda h: buyer.page_buyer_orders(h, conn),
+    "/buyer/passports": lambda h: buyer.page_buyer_passports(h, conn),
+    "/buyer/settings": lambda h: buyer.page_buyer_settings(h, conn)
+}
+API_POST = {
+    "/api/lots": api_lots, "/api/aggregate": api_aggregate, "/api/batches": api_batches,
+    "/api/reset": api_reset, "/api/simulate-intake": api_simulate_intake,
+    "/api/auth/login": api_auth_login, "/api/auth/register": api_auth_register, "/api/auth/logout": api_auth_logout,
+    "/api/admin/lots/verify": lambda h, p: admin.api_admin_verify_lot(h, p, conn),
+    "/api/admin/requests/update": lambda h, p: admin.api_admin_update_request(h, p, conn),
+    "/api/admin/users/toggle": lambda h, p: admin.api_admin_toggle_user_status(h, p, conn),
+    "/api/admin/users/create": lambda h, p: admin.api_admin_create_user(h, p, conn),
+    "/api/seller/submit": lambda h, p: seller.api_seller_submit_lot(h, p, conn),
+    "/api/seller/settings": lambda h, p: seller.api_seller_update_settings(h, p, conn),
+    "/api/buyer/requests/create": lambda h, p: buyer.api_buyer_create_request(h, p, conn),
+    "/api/buyer/saved/toggle": lambda h, p: buyer.api_buyer_toggle_saved(h, p, conn),
+    "/api/buyer/settings": lambda h, p: buyer.api_buyer_update_settings(h, p, conn)
+}
 
 class H(BaseHTTPRequestHandler):
     def log_message(self, *a): pass
-    def _send(self, code, body, ctype="text/html; charset=utf-8"):
+    def _send(self, code, body, ctype="text/html; charset=utf-8", extra_headers=None):
         b = body.encode() if isinstance(body, str) else body
-        self.send_response(code); self.send_header("Content-Type", ctype)
-        self.send_header("Content-Length", str(len(b))); self.end_headers(); self.wfile.write(b)
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(b)))
+        if extra_headers:
+            for k, v in extra_headers:
+                self.send_header(k, v)
+        self.end_headers()
+        self.wfile.write(b)
+
+    def _redirect(self, url, extra_headers=None):
+        self.send_response(302)
+        self.send_header("Location", url)
+        if extra_headers:
+            for k, v in extra_headers:
+                self.send_header(k, v)
+        self.end_headers()
+
     def do_GET(self):
         try:
-            path = urllib.parse.urlparse(self.path).path
+            parsed = urllib.parse.urlparse(self.path)
+            path = parsed.path
             if path.startswith("/static/") or path.startswith("/uploads/"):
                 fp = os.path.join(BASE, path.lstrip("/"))
                 if os.path.isfile(fp):
                     ct = "text/css" if fp.endswith(".css") else "application/javascript" if fp.endswith(".js") else "image/png"
                     self._send(200, open(fp, "rb").read(), ct); return
                 self._send(404, "not found"); return
+
+            if path == "/logout":
+                sid = auth.extract_session_id(self.headers)
+                if sid:
+                    try:
+                        auth.delete_session(conn, sid)
+                    except Exception as err:
+                        print(f"[AUTH] Session deletion note: {err}")
+                is_secure = is_public_url(BASE_URL)
+                del_cookie = auth.make_delete_cookie(is_secure=is_secure)
+                self._redirect("/login?msg=logged_out", extra_headers=[("Set-Cookie", del_cookie)])
+                return
+
+            if path == "/api/auth/me":
+                user, csrf_token = get_current_user(self)
+                if user:
+                    self._send(200, json.dumps({"ok": True, "authenticated": True, "user": user, "csrf_token": csrf_token}), "application/json")
+                else:
+                    self._send(200, json.dumps({"ok": True, "authenticated": False, "user": None}), "application/json")
+                return
+
             if path.startswith("/passport/"):
                 self._send(200, page_passport_detail(urllib.parse.unquote(path.split("/passport/", 1)[1]))); return
-            fn = ROUTES_GET.get(path)
-            self._send(200, fn() if fn else layout("404", "/", "<h1>404 Not Found</h1>"))
+
+            fn = ROUTES_GET.get(path) or (ROUTES_GET.get(path.rstrip("/")) if path != "/" else None)
+            if fn:
+                sig = inspect.signature(fn)
+                if len(sig.parameters) >= 1:
+                    body = fn(self)
+                else:
+                    body = fn()
+                if body is not None:
+                    self._send(200, body)
+            else:
+                self._send(404, layout("404", "/", "<h1>404 Not Found</h1>"))
         except Exception as ex:
             traceback.print_exc()
             self._send(500, layout("500", "/", "<h1>500 Internal Server Error</h1><p>" + e(ex) + "</p>"))
+
     def do_POST(self):
         path = urllib.parse.urlparse(self.path).path
-        fn = API_POST.get(path)
-        if not fn: self._send(404, json.dumps({"ok": False, "error": "Endpoint not found"}), "application/json"); return
+        fn = API_POST.get(path) or (API_POST.get(path.rstrip("/")) if path != "/" else None)
+        if not fn:
+            self._send(404, json.dumps({"ok": False, "error": "Endpoint not found"}), "application/json")
+            return
         try:
             n = int(self.headers.get("Content-Length", 0))
             payload = json.loads(self.rfile.read(n) or b"{}")
-            self._send(200, json.dumps(fn(payload)), "application/json")
+
+            # CSRF Verification on authenticated state-changing requests
+            user, csrf_token = get_current_user(self)
+            if user and path not in ("/api/auth/login", "/api/auth/register", "/api/auth/logout"):
+                submitted_csrf = payload.get("csrf_token") or self.headers.get("X-CSRF-Token")
+                if not auth.verify_csrf(csrf_token, submitted_csrf):
+                    self._send(403, json.dumps({"ok": False, "error": "CSRF verification failed. Please refresh the page and try again."}), "application/json")
+                    return
+
+            sig = inspect.signature(fn)
+            if len(sig.parameters) == 2:
+                res = fn(self, payload)
+            else:
+                res = fn(payload)
+
+            extra_headers = []
+            if isinstance(res, dict) and "_cookie" in res:
+                extra_headers.append(("Set-Cookie", res.pop("_cookie")))
+
+            self._send(200, json.dumps(res), "application/json", extra_headers=extra_headers)
         except Exception as ex:
             traceback.print_exc()
             self._send(200, json.dumps({"ok": False, "error": str(ex)}), "application/json")

@@ -40,6 +40,9 @@ def get_db(path):
 def init_db(conn):
     conn.executescript(SCHEMA)
     conn.commit()
+    import auth
+    auth.run_migrations(conn)
+    auth.seed_demo_users(conn)
 
 # ---------- geo ----------
 def haversine(lat1, lon1, lat2, lon2):

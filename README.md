@@ -1,90 +1,94 @@
-# PunorAI — AI-Powered Textile Circularity Platform
+# CIRCULO AI &mdash; Textile Circularity & Resource Recovery
 
-**Turning Textile Waste into New Value.**
-
-*Developed for the **Circular Future** Challenge under the **ClimateSphere AI** Ecosystem.*
-
----
-
-## Overview
-
-**PunorAI** is an AI-powered textile circularity and resource recovery platform that helps Bangladesh's ready-made garment (RMG) industry turn fragmented textile cutting waste into traceable, buyer-compatible circular feedstock.
-
-Bangladesh generates over 500,000 tonnes of post-industrial garment waste annually. Individual cutting rooms produce fragmented 200–500 kg lots, while industrial spinners and mechanical/chemical recyclers require minimum 1,000+ kg uniform batches with strict contamination limits (≤5%).
-
-PunorAI bridges this gap with:
-1. **Material Characterization & Intake:** Standardized profiling capturing fiber category, grade, color, and contamination percentage.
-2. **Combinatorial Multi-Lot Aggregation:** Deterministic subset-sum constraint optimizer bundling fragmented lots into uniform 1,000+ kg batches.
-3. **Recycler Matching:** Multi-objective compatibility scoring evaluating buyer-specific technical thresholds.
-4. **Reverse Logistics Planning:** Clustered multi-stop pickup routing across Dhaka-Gazipur-Ashulia with Haversine distance and freight cost modeling (120 BDT/km).
-5. **Digital Material Passports:** QR-verifiable batch passports and auditable verification event logs ensuring chain-of-custody integrity.
-6. **Evidence-Based Circularity Reporting:** Empirical mass-balance reporting aligned with SDG 12 (Responsible Consumption & Production) with transparent simulation boundaries.
+**Solution for the Circular Future Challenge under ClimateSphere AI**  
+*ClimateSphere AI: AI for decarbonization, resilience, water, energy, and the circular economy.*  
+*Challenges: CarbonIQ &bull; Climate Shield &bull; AquaGuard &bull; Energy Brain &bull; **Circular Future** (Active Track)*
 
 ---
 
-## Quick Start (Zero Dependencies • Python 3.10+ Standard Library)
+## Canonical Product Positioning
 
-PunorAI requires **no external packages or `pip install`**. It runs entirely on the standard Python runtime:
+> **"An AI-powered textile circularity and resource recovery platform that helps Bangladesh's garment industry turn fragmented textile waste into traceable, buyer-compatible reusable resources."**
+
+---
+
+## The Industrial Problem in Bangladesh
+
+Bangladesh is the world's second-largest ready-made garment (RMG) exporter, generating over **500,000 tonnes of post-industrial textile clips (jhoot)** annually across Gazipur, Ashulia, Narayanganj, and Chittagong.
+
+While high-grade scrap moves through informal trading networks, textile circularity is blocked by three structural failures:
+1. **Material Characterization Deficit**: Waste is mixed, unlabelled, and variable in purity.
+2. **Extreme Supply Fragmentation**: Individual cutting rooms produce only 200–500 kg daily, whereas industrial mechanical and chemical recyclers require minimum 1,000+ kg uniform lots with &le;5% contamination.
+3. **Traceability Void**: Spinners and international fashion brands face zero chain-of-custody verification.
+
+CIRCULO AI solves this not as a generic marketplace, but as a combinatorial decision-support intelligence platform.
+
+---
+
+## Six Core Solution Pillars
+
+1. **Textile Waste Inventory & Material Characterization**: Standardized profiling capturing fiber category, grade, color, contamination %, and mill origin. AI vision suggestion slot with mandatory physical verification.
+2. **Explainable Combinatorial Aggregation**: Transparent subset-sum constraint solver that bundles fragmented 200–500 kg lots into uniform 1,000+ kg batches satisfying rigid recycler thresholds.
+3. **Recycler Matching & Technical Criteria**: Algorithmic compatibility scoring evaluating buyer-specific technical thresholds (contamination tolerance, minimum tonnage, and price discovery benchmarks).
+4. **Resource Recovery Reverse Logistics**: Clustered multi-stop pickup routing across Dhaka-Gazipur-Ashulia garment mills using Haversine network analysis and transparent freight cost modeling.
+5. **Digital Material Passports & Traceability**: Unique batch codes, QR-verifiable passports, and immutable event logs ensuring verifiable circularity for textile mills and spinners.
+6. **Evidence-Based Circularity Reporting**: Strictly empirical mass-balance reporting aligned with SDG 12 (Responsible Consumption & Production) with zero greenwashing disclosures.
+
+---
+
+## Run Locally (Zero Dependencies &bull; Python 3.9+ Standard Library)
 
 ```bash
-# 1. Clone or navigate to the repository
-cd PunorAI
-
-# 2. Run the application
+cd circulo-ai
 python app.py
-
-# 3. Open in browser
-# http://127.0.0.1:8000
+# Open http://localhost:8000
 ```
+
+- No `pip install` required. No API keys required.
+- SQLite database (`circulo.db`) and demo data are initialized automatically.
+- Multi-threaded HTTP server with thread-local SQLite proxy connections.
 
 ---
 
-## Running the Automated Test Suite
+## 5-Minute ClimateSphere AI Judge Demo Workflow
 
-PunorAI includes a complete automated regression and verification test suite:
-
-```bash
-# Run all test suites
-python run_all_tests.py
-```
-
-Included test suites:
-- `test_punorai_rebrand.py`: Verifies brand identity, navigation routes, and UI integrity (69/69 checks).
-- `test_multiobjective_optimizer.py`: Tests Pareto optimization, shortfall diagnostics, and freight costs (29/29 checks).
-- `test_final_demo_fixes.py`: Tests unallocated inventory filtering and status badge logic.
-- `test_aggregation_eligibility.py`: Tests multi-buyer eligibility and exclusion reason codes.
-- `test_planner_exclusion_audit.py`: Validates strict exclusion of already-allocated lots.
-- `test_passport_regression.py`: Validates QR code generation, event logs, and dynamic verification.
-- `test_impact_analytics.py`: Audits empirical mass balances and category breakdown metrics.
+1. **Platform Overview (`/`)**: Review the 500k-tonne textile waste challenge and CIRCULO AI's Circular Future alignment.
+2. **Executive Dashboard (`/dashboard`)**: Monitor total characterized waste, unallocated recoverable resources, circular pipeline stages, and one-click demo reset.
+3. **Waste Characterization (`/lots`)**: Inspect seeded factory lots across Gazipur and Ashulia; register a new lot with photo preview and contamination metrics.
+4. **Combinatorial Aggregation (`/aggregation`)**: Select Recycler X (needs 1,000 kg cotton); run the subset-sum engine with 100% transparent inclusion and exclusion reason codes.
+5. **Digital Material Passport (`/passports`)**: Form candidate batch and instantly issue a Digital Material Passport with QR code and event audit trail.
+6. **Cluster Logistics (`/planning`)**: Inspect multi-stop pickup route with declared Haversine distance and transparent freight cost estimates.
+7. **Empirical Circularity Reports (`/reports`)**: Review strictly measured mass-balance platform activity and environmental boundary disclosures (SDG 12 aligned; zero fabricated carbon credits).
 
 ---
 
-## Project Structure
+## System Architecture
 
 ```
-PunorAI/
-├── app.py                           # Application server, HTTP routing, page templates & JSON APIs
-├── core.py                          # Multi-objective Pareto optimizer, route heuristic & schema
-├── circulo.db                       # SQLite database (seed inventory, batches & audit log)
-├── run_all_tests.py                 # Master test suite runner
-├── requirements.txt                 # Dependency documentation (Python 3.10+ stdlib)
-├── .env.example                     # Environment configuration example
-├── .gitignore                       # Git ignore configuration
-├── static/
-│   ├── app.js                       # Frontend UI controller & interactive maps
-│   ├── style.css                    # PunorAI enterprise design system & animations
-│   ├── leaflet.js                   # Local Leaflet mapping engine
-│   └── leaflet.css                  # Leaflet stylesheet
-├── uploads/
-│   └── lot_1807.jpg                 # Sample lot intake photograph
-└── test_*.py                        # Focused automated test suites
+Browser Client (HTML5 / Modern CSS / Vanilla JS)
+       │
+       ▼
+ app.py  (Standard library ThreadingHTTPServer, thread-local DB proxy, routing, UI templates, JSON APIs)
+       │
+       ▼
+ core.py (SQLite schema, combinatorial subset-sum aggregation solver, buyer matcher,
+          Haversine route heuristic, SVG charts, Digital Material Passport event trail)
+       │
+       ▼
+ circulo.db (SQLite WAL mode) + uploads/
 ```
+
+### AI Module Integration Seams
+- **Vision Material Suggestion**: Plugs into `POST /api/lots` photo intake.
+- **Aggregation Optimizer**: Plugs into `core.plan_aggregation` (subset-sum solver; ready for integer linear programming / ILP).
+- **Recycler Matching**: Plugs into `core.match_buyers` (multi-constraint compatibility scoring).
+- **Logistics Route Optimization**: Plugs into `core.plan_route` (nearest-neighbour heuristic; ready for live routing APIs).
 
 ---
 
 ## Methodology Honesty & Integrity Disclosures
 
 - All factories, buyers, and price benchmarks are simulated demonstration records based on real Bangladesh garment cluster operations.
-- Aggregation uses an exact, explainable combinatorial constraint solver — never a hardcoded mock.
-- No carbon offset credits, greenhouse gas reduction figures, or avoided water volumes are claimed as certified credits in this demo. PunorAI strictly reports empirical mass balance (kilograms characterized, aggregated, and routed). Certified lifecycle assessment (LCA) factors will only be incorporated once certified by accredited independent auditors.
-- Fiber composition is declared by suppliers and physically verified at intake — never claimed as "certified by AI".
+- Aggregation uses an exact, explainable combinatorial constraint solver &mdash; never a hardcoded mock.
+- No carbon offset credits, greenhouse gas reduction figures, or avoided water volumes are claimed as certified credits in this demo. CIRCULO AI strictly reports empirical mass balance (kilograms characterized, aggregated, and routed). Certified lifecycle assessment (LCA) factors will only be incorporated once certified by accredited independent auditors.
+- Fiber composition is declared by suppliers and physically verified at intake &mdash; never claimed as "certified by AI".

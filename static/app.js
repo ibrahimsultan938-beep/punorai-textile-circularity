@@ -562,6 +562,11 @@ function toggleSidebar() {
   if (backdrop) backdrop.classList.toggle('open');
 }
 
+function toggleLandingMenu() {
+  const menu = document.getElementById('landingNavMenu');
+  if (menu) menu.classList.toggle('mobile-open');
+}
+
 function escapeHtml(str) {
   const div = document.createElement('div');
   div.textContent = str;

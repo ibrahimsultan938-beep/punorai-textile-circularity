@@ -3,33 +3,32 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# Virtual environments
-.venv/
-env/
-venv/
-ENV/
+# Temporary and local backups
+backup_*/
+*.bak
+*.pre_redesign.bak
 
-# Environment files with secrets
+# Scratch scripts and temporary development artifacts
+scratch/
+
+# SQLite temporary runtime journals and WAL files
+# Note: circulo.db is intentionally preserved for standalone demo deployment
+*.db-wal
+*.db-shm
+*.db-journal
+
+# Environment variables & secrets
 .env
 .env.local
+.env.*.local
+!.env.example
 
-# SQLite runtime locks (database itself circulo.db is tracked for demo)
-*.db-journal
-*.db-shm
-*.db-wal
+# Temporary logs and test outputs
+*.log
+*.tmp
+.system_generated/
 
-# OS generated files
+# OS-specific files
 .DS_Store
 Thumbs.db
 desktop.ini
-
-# Editor / IDE directories
-.vscode/
-.idea/
-*.sublime-project
-*.sublime-workspace
-
-# Temporary & backup files
-*.bak
-*.tmp
-*.log
